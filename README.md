@@ -96,41 +96,56 @@ The installer handles everything: system updates, Java 25, Hytale Downloader, fi
 
 ### Step 5: Authenticate your server
 
-After installation, your server needs to be linked to a Hytale account before players can connect.
+Before players can join, your server must be linked to a Hytale account. This is a one-time setup.
 
-1. Stop the service and run the server interactively:
+1. **Stop the background service** so you can run the server interactively (where you can type commands to it):
 
 ```bash
 systemctl stop hytale-server
+```
+
+2. **Switch to the hytale user and start the server manually:**
+
+```bash
 su - hytale
 cd /opt/hytale/server
 java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip
 ```
 
-2. In the server console, type:
+> Replace `4G` with the memory value you chose during installation (check with `cat /opt/hytale/credentials.txt`).
+
+Wait for the server to finish loading. When you see the server console ready, continue.
+
+3. **Type the authentication command** in the server console:
 
 ```
 /auth login device
 ```
 
-3. The console will display a **URL** (`https://accounts.hytale.com/device`) and a **code** (e.g. `ABCD-1234`)
-4. Open the URL in your browser, enter the code, and sign in with your Hytale account
-5. After you see **"Authentication successful!"**, run:
+4. The console will print a **URL** and a **code** (e.g. `ABCD-1234`). **On your computer** (not the VPS), open that URL in a browser, paste the code, and sign in with your Hytale account.
+
+5. When you see **"Authentication successful!"** back in the console, **save your login** so it survives reboots:
 
 ```
 /auth persistence Encrypted
 ```
 
-This saves your credentials so you don't need to re-authenticate after every reboot.
+> If you skip this step, you'll need to re-authenticate every time the server restarts.
 
-6. Stop the interactive server (`Ctrl+C`) and start the service:
+6. **Press `Ctrl+C`** to stop the server, then switch back to root and restart the service:
 
 ```bash
 exit
 systemctl start hytale-server
 ```
 
-Players can now connect using your server's IP address on port 5520.
+7. **Verify it's running:**
+
+```bash
+systemctl status hytale-server
+```
+
+Look for **active (running)** in green. Players can now connect using your server's IP on port 5520.
 
 ---
 
@@ -226,6 +241,15 @@ sudo systemctl restart sshd
 
 fail2ban automatically blocks IPs after repeated failed login attempts:
 
+**Rocky/RHEL:**
+```bash
+sudo dnf install -y epel-release
+sudo dnf install -y fail2ban
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
+```
+
+**Ubuntu/Debian:**
 ```bash
 sudo apt install -y fail2ban
 sudo systemctl enable fail2ban
@@ -540,8 +564,8 @@ mkdir -p /usr/lib/jvm
 tar -xzf /tmp/temurin-25.tar.gz -C /usr/lib/jvm/
 JDK_DIR=$(ls -d /usr/lib/jvm/jdk-25* | head -1)
 ln -sfn "$JDK_DIR" /usr/lib/jvm/temurin-25
-update-alternatives --install /usr/bin/java java "$JDK_DIR/bin/java" 1
-update-alternatives --set java "$JDK_DIR/bin/java"
+alternatives --install /usr/bin/java java "$JDK_DIR/bin/java" 1
+alternatives --set java "$JDK_DIR/bin/java"
 rm -f /tmp/temurin-25.tar.gz
 java --version  # Should output: openjdk 25.x.x
 ```
