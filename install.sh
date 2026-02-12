@@ -107,18 +107,8 @@ else
     error "Invalid memory format '${SERVER_MEM}'. Use format like: 4G or 4096M"
 fi
 
-# Port
-echo ""
-echo -e "${CYAN}Which UDP port should the server listen on?${NC}"
-read -r -t 60 -p "  Port [5520]: " SERVER_PORT < /dev/tty || SERVER_PORT=""
-SERVER_PORT=${SERVER_PORT:-5520}
-# Validate port number
-if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || [[ "$SERVER_PORT" -lt 1 ]] || [[ "$SERVER_PORT" -gt 65535 ]]; then
-    error "Invalid port number '${SERVER_PORT}'. Must be between 1 and 65535."
-fi
-if [[ "$SERVER_PORT" -lt 1024 ]]; then
-    warn "Port ${SERVER_PORT} is a privileged port (<1024). This may require additional configuration."
-fi
+# Port (Hytale default, no need to ask)
+SERVER_PORT=5520
 
 # Backups
 echo ""

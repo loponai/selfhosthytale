@@ -90,8 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/install
 
 You'll be asked for:
 1. **Server memory** — how much RAM to allocate (default: ~75% of your VPS RAM)
-2. **Server port** — UDP port to listen on (default: 5520)
-3. **Enable backups** — automatic backups every 30 minutes (default: yes)
+2. **Enable backups** — automatic backups every 30 minutes (default: yes)
 
 The installer handles everything: system updates, Java 25, Hytale Downloader, firewall rules, systemd service, and backup cron job.
 
