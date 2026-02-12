@@ -781,6 +781,20 @@ EOF
 
 ---
 
+## Uninstalling
+
+To completely remove the Hytale server and start fresh:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/uninstall.sh | sudo bash
+```
+
+This removes the systemd service, server files, backups, cron job, the `hytale` user, firewall rules, and install log. It will ask for confirmation before deleting anything, and optionally removes Java 25.
+
+After uninstalling, you can re-run the installer to start over from scratch.
+
+---
+
 ## Reference
 
 ### Requirements
