@@ -410,60 +410,114 @@ systemctl restart hytale-server
 
 ### Everyday Commands
 
+These are the commands you'll use most often to manage your server from SSH:
+
 ```bash
 systemctl start hytale-server       # Start the server
-systemctl stop hytale-server        # Stop the server
+systemctl stop hytale-server        # Stop the server (waits for graceful shutdown)
 systemctl restart hytale-server     # Restart the server
-systemctl status hytale-server      # Check server status
-journalctl -u hytale-server -f      # View live logs
-journalctl -u hytale-server --since "1 hour ago"  # Recent logs
+systemctl status hytale-server      # Check if the server is running
+journalctl -u hytale-server -f      # View live logs (Ctrl+C to exit)
+journalctl -u hytale-server --since "1 hour ago"  # View recent logs
 ```
+
+To check if the server is healthy, run `systemctl status hytale-server` and look for **active (running)** in green.
 
 ### Server Console Commands
 
-For interactive commands, stop the service and run the server directly (see [Step 5](#step-5-authenticate-your-server)).
+To run in-game commands, you need to run the server interactively (not as a background service). Stop the service first, then start it manually:
 
-| Command | Description |
-|---------|-------------|
-| `/auth login device` | Authenticate the server |
-| `/auth persistence Encrypted` | Save auth credentials encrypted |
-| `/stop` | Gracefully stop the server |
-| `/whitelist add <player>` | Add a player to the whitelist |
-| `/whitelist remove <player>` | Remove a player from the whitelist |
-| `/ban <player>` | Ban a player |
-| `/pardon <player>` | Unban a player |
-| `/op <player>` | Grant operator permissions |
-| `/deop <player>` | Revoke operator permissions |
+```bash
+systemctl stop hytale-server
+su - hytale
+cd /opt/hytale/server
+java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip
+```
+
+> Replace `4G` with your configured memory value (check `cat /opt/hytale/credentials.txt`).
+
+Now you can type commands directly into the server console:
+
+#### Authentication
+
+| Command | What it does |
+|---------|--------------|
+| `/auth login device` | Link the server to your Hytale account |
+| `/auth persistence Encrypted` | Save login so it survives reboots |
+| `/auth logout` | Unlink the server from your account |
+
+#### Player Management
+
+| Command | What it does |
+|---------|--------------|
+| `/whitelist on` | Enable the whitelist (only approved players can join) |
+| `/whitelist off` | Disable the whitelist (anyone can join) |
+| `/whitelist add PlayerName` | Allow a player to join |
+| `/whitelist remove PlayerName` | Remove a player from the whitelist |
+| `/whitelist list` | Show all whitelisted players |
+| `/ban PlayerName` | Permanently ban a player |
+| `/ban PlayerName Reason here` | Ban with a reason |
+| `/pardon PlayerName` | Unban a player |
+| `/kick PlayerName` | Kick a player (they can rejoin) |
+
+#### Administration
+
+| Command | What it does |
+|---------|--------------|
+| `/op PlayerName` | Give a player operator (admin) permissions |
+| `/deop PlayerName` | Remove operator permissions |
+| `/stop` | Gracefully shut down the server |
+| `/say Hello everyone!` | Broadcast a message to all players |
+| `/list` | Show online players |
+| `/tp PlayerName x y z` | Teleport a player to coordinates |
+
+#### Updates
+
+| Command | What it does |
+|---------|--------------|
+| `/update check` | Check if a new version is available |
+| `/update download` | Download the latest update |
+| `/update apply` | Apply the update (server will restart) |
+
+When you're done with interactive commands, press `Ctrl+C` to stop the server, type `exit`, and restart the service:
+
+```bash
+exit
+systemctl start hytale-server
+```
 
 ### Backups
 
-The installer sets up automatic backups every 30 minutes. Old backups are deleted after 24 hours.
+The installer sets up automatic backups every 30 minutes. Old backups are automatically deleted after 24 hours.
 
+**Check your backups:**
 ```bash
-# View the backup cron job
-crontab -u hytale -l
+ls -lh /opt/hytale/backups/
+```
 
-# Manual backup
+You should see files like `hytale-backup-20260212-143000.tar.gz` — one every 30 minutes.
+
+**Manual backup** (before making big changes):
+```bash
 systemctl stop hytale-server
 tar -czf /opt/hytale/backups/hytale-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
   -C /opt/hytale/server universe/ config.json permissions.json whitelist.json bans.json
 systemctl start hytale-server
+```
 
-# Restore from backup
+**Restore from backup** (if something goes wrong):
+```bash
 systemctl stop hytale-server
 cd /opt/hytale/server
 tar -xzf /opt/hytale/backups/hytale-backup-TIMESTAMP.tar.gz
 systemctl start hytale-server
 ```
 
-You can also use Hytale's built-in backup mechanism:
-
-```bash
-java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip \
-  --backup --backup-frequency 30 --backup-dir /opt/hytale/backups
-```
+Replace `TIMESTAMP` with the actual backup filename from `ls /opt/hytale/backups/`.
 
 ### Updating Your Server
+
+Always back up before updating. Then:
 
 ```bash
 systemctl stop hytale-server
@@ -475,15 +529,15 @@ exit
 systemctl start hytale-server
 ```
 
-Or use in-game update commands:
+Or use the in-game `/update` commands from the server console (see above).
 
-| Command | Description |
-|---------|-------------|
-| `/update check` | Check for available updates |
-| `/update download` | Download the latest update |
-| `/update apply` | Apply the downloaded update |
+### View Install Details
 
-> Always create a backup before applying updates.
+All your server settings and useful commands are saved in one place:
+
+```bash
+cat /opt/hytale/credentials.txt
+```
 
 ---
 
