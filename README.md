@@ -537,7 +537,7 @@ apt update && apt upgrade -y
 cat > /etc/yum.repos.d/adoptium.repo << 'EOF'
 [Adoptium]
 name=Adoptium
-baseurl=https://packages.adoptium.net/artifactory/rpm/rocky/$releasever/$basearch
+baseurl=https://packages.adoptium.net/artifactory/rpm/rhel/$releasever/$basearch
 enabled=1
 gpgcheck=1
 gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public

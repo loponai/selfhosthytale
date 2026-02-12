@@ -149,16 +149,17 @@ if java --version 2>&1 | grep -qE "openjdk 25\."; then
     success "Java 25 already installed, skipping."
 else
     if [[ "$PKG_MANAGER" == "dnf" ]]; then
-        # RPM-based: add Adoptium repo for Rocky/RHEL
+        # RPM-based: add Adoptium repo for RHEL/Rocky/Alma
         cat > /etc/yum.repos.d/adoptium.repo << 'REPOEOF'
 [Adoptium]
 name=Adoptium
-baseurl=https://packages.adoptium.net/artifactory/rpm/rocky/$releasever/$basearch
+baseurl=https://packages.adoptium.net/artifactory/rpm/rhel/$releasever/$basearch
 enabled=1
 gpgcheck=1
 gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public
 REPOEOF
-        dnf install -y -q temurin-25-jdk
+        dnf makecache -q 2>/dev/null || true
+        dnf install -y temurin-25-jdk
     else
         # Deb-based: add Adoptium repo for Ubuntu/Debian
         mkdir -p /etc/apt/keyrings
