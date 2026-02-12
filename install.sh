@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# --- Security Hardening ------------------------------------------------------
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+umask 027
+
 # --- Colors & Helpers --------------------------------------------------------
 
 RED='\033[0;31m'
@@ -22,11 +27,25 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 LOG_FILE="/var/log/hytale-install.log"
+touch "$LOG_FILE"
+chmod 640 "$LOG_FILE"
 
-info()    { echo -e "${CYAN}[INFO]${NC} $*" | tee -a "$LOG_FILE"; }
-success() { echo -e "${GREEN}[OK]${NC} $*" | tee -a "$LOG_FILE"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOG_FILE"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE"; exit 1; }
+# Cleanup on interrupt or failure
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        echo -e "${YELLOW}[WARN]${NC} Installation interrupted or failed. System may be in a partial state." | tee -a "$LOG_FILE"
+        echo -e "${YELLOW}[WARN]${NC} Re-run the installer to resume, or run the uninstaller to clean up." | tee -a "$LOG_FILE"
+        rm -f /tmp/temurin-25-jdk.*.tar.gz 2>/dev/null || true
+        rm -f /tmp/adoptium-key.*.pub 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+info()    { printf '%b %s\n' "${CYAN}[INFO]${NC}" "$*" | tee -a "$LOG_FILE"; }
+success() { printf '%b %s\n' "${GREEN}[OK]${NC}" "$*" | tee -a "$LOG_FILE"; }
+warn()    { printf '%b %s\n' "${YELLOW}[WARN]${NC}" "$*" | tee -a "$LOG_FILE"; }
+error()   { printf '%b %s\n' "${RED}[ERROR]${NC}" "$*" | tee -a "$LOG_FILE"; exit 1; }
 
 # --- Detect Package Manager --------------------------------------------------
 
@@ -98,6 +117,10 @@ read -r -t 60 -p "  Memory [${DEFAULT_MEM}G]: " SERVER_MEM < /dev/tty || SERVER_
 SERVER_MEM=${SERVER_MEM:-${DEFAULT_MEM}G}
 # Normalize: handle G, g, M, m
 SERVER_MEM=$(echo "$SERVER_MEM" | tr '[:lower:]' '[:upper:]')
+# Reject values with whitespace or newlines (prevents systemd directive injection)
+if [[ "$SERVER_MEM" =~ [[:space:]] ]]; then
+    error "Memory value must not contain whitespace."
+fi
 if [[ "$SERVER_MEM" =~ ^[0-9]+M$ ]]; then
     MB_VALUE="${SERVER_MEM%M}"
     SERVER_MEM="$(( MB_VALUE / 1024 ))G"
@@ -159,20 +182,39 @@ else
             JDK_ARCH="x64"
         elif [[ "$ARCH" == "aarch64" ]]; then
             JDK_ARCH="aarch64"
+        else
+            error "Unsupported architecture for JDK download: $ARCH"
         fi
 
         info "Downloading Temurin JDK 25 tarball..."
         JDK_URL="https://api.adoptium.net/v3/binary/latest/25/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
-        JDK_TAR="/tmp/temurin-25-jdk.tar.gz"
-        wget -q --show-progress -O "$JDK_TAR" "$JDK_URL" || error "Failed to download JDK 25. Check https://adoptium.net/temurin/releases/ for availability."
+        JDK_SHA_URL="https://api.adoptium.net/v3/binary/latest/25/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse?type=sha256"
+        JDK_TAR=$(mktemp /tmp/temurin-25-jdk.XXXXXX.tar.gz)
+        wget -q --show-progress -O "$JDK_TAR" "$JDK_URL" || { rm -f "$JDK_TAR"; error "Failed to download JDK 25. Check https://adoptium.net/temurin/releases/ for availability."; }
+
+        # Verify checksum
+        info "Verifying JDK checksum..."
+        EXPECTED_SHA=$(wget -qO - "$JDK_SHA_URL" 2>/dev/null | awk '{print $1}') || true
+        if [[ -n "$EXPECTED_SHA" ]]; then
+            ACTUAL_SHA=$(sha256sum "$JDK_TAR" | awk '{print $1}')
+            if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+                rm -f "$JDK_TAR"
+                error "JDK checksum mismatch! Download may be corrupted or tampered. Expected: ${EXPECTED_SHA} Got: ${ACTUAL_SHA}"
+            fi
+            success "JDK checksum verified."
+        else
+            rm -f "$JDK_TAR"
+            error "Could not fetch JDK checksum. Refusing to install unverified binary. Check network connectivity."
+        fi
 
         # Extract to /opt and symlink
         info "Installing JDK to /usr/lib/jvm/temurin-25..."
         mkdir -p /usr/lib/jvm
-        tar -xzf "$JDK_TAR" -C /usr/lib/jvm/
+        tar --no-same-owner -xzf "$JDK_TAR" -C /usr/lib/jvm/
         # The tarball extracts to a directory like jdk-25.0.1+9
-        JDK_DIR=$(ls -d /usr/lib/jvm/jdk-25* 2>/dev/null | head -1)
-        if [[ -z "$JDK_DIR" ]]; then
+        JDK_DIRS=(/usr/lib/jvm/jdk-25*)
+        JDK_DIR="${JDK_DIRS[0]}"
+        if [[ ! -d "$JDK_DIR" ]]; then
             error "JDK extraction failed. Could not find extracted directory."
         fi
         ln -sfn "$JDK_DIR" /usr/lib/jvm/temurin-25
@@ -185,6 +227,7 @@ else
 
         # Add to PATH via profile if alternatives didn't work
         if ! java --version 2>&1 | grep -qE "openjdk 25\."; then
+            install -m 0644 /dev/null /etc/profile.d/temurin.sh
             echo "export JAVA_HOME=${JDK_DIR}" > /etc/profile.d/temurin.sh
             echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/temurin.sh
             export JAVA_HOME="${JDK_DIR}"
@@ -195,8 +238,11 @@ else
     else
         # Deb-based: add Adoptium repo for Ubuntu/Debian
         mkdir -p /etc/apt/keyrings
-        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
-            | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg
+        TEMP_GPG=$(mktemp /tmp/adoptium-key.XXXXXX.pub)
+        wget -qO "$TEMP_GPG" https://packages.adoptium.net/artifactory/api/gpg/key/public \
+            || { rm -f "$TEMP_GPG"; error "Failed to download Adoptium GPG key."; }
+        gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg < "$TEMP_GPG"
+        rm -f "$TEMP_GPG"
 
         # Detect distro codename robustly
         CODENAME=""
@@ -204,7 +250,12 @@ else
             CODENAME=$(lsb_release -cs 2>/dev/null || true)
         fi
         if [[ -z "$CODENAME" ]] && [[ -f /etc/os-release ]]; then
-            CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+            CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2 | tr -d '"')
+        fi
+        # Validate codename contains only lowercase letters
+        if [[ -n "$CODENAME" && ! "$CODENAME" =~ ^[a-z]+$ ]]; then
+            warn "Unexpected distro codename '${CODENAME}', defaulting to 'jammy'."
+            CODENAME="jammy"
         fi
         if [[ -z "$CODENAME" ]]; then
             warn "Could not detect distro codename, defaulting to 'jammy' (Ubuntu 22.04)."
@@ -233,7 +284,7 @@ info "Creating '${HYTALE_USER}' system user..."
 if id "$HYTALE_USER" &>/dev/null; then
     success "User '${HYTALE_USER}' already exists, skipping."
 else
-    useradd -r -m -d "$INSTALL_DIR" -s /bin/bash "$HYTALE_USER"
+    useradd -r -m -d "$INSTALL_DIR" -s /usr/sbin/nologin "$HYTALE_USER"
     success "User '${HYTALE_USER}' created."
 fi
 
@@ -250,6 +301,8 @@ if [[ "$ARCH" == "x86_64" ]]; then
     DOWNLOADER_ARCH="linux-amd64"
 elif [[ "$ARCH" == "aarch64" ]]; then
     DOWNLOADER_ARCH="linux-arm64"
+else
+    error "Unsupported architecture for Hytale Downloader: $ARCH"
 fi
 
 DOWNLOADER_URL="https://downloader.hytale.com/hytale-downloader.zip"
@@ -257,8 +310,8 @@ DOWNLOADER_BIN="hytale-downloader-${DOWNLOADER_ARCH}"
 
 if [[ -f "${SERVER_DIR}/${DOWNLOADER_BIN}" ]]; then
     warn "Hytale Downloader already exists. Checking for updates..."
-    chown -R "${HYTALE_USER}:${HYTALE_USER}" "$INSTALL_DIR"
-    su - "$HYTALE_USER" -c "cd ${SERVER_DIR} && ./${DOWNLOADER_BIN} -check-update" || warn "Update check failed (non-fatal)."
+    chown -R --no-dereference "${HYTALE_USER}:${HYTALE_USER}" "$INSTALL_DIR"
+    runuser -u "$HYTALE_USER" -- bash -c 'cd "$1" && ./"$2" -check-update' _ "$SERVER_DIR" "$DOWNLOADER_BIN" || warn "Update check failed (non-fatal)."
 else
     info "Downloading from: ${DOWNLOADER_URL}"
     wget -q --show-progress -O hytale-downloader.zip "$DOWNLOADER_URL" || {
@@ -269,6 +322,7 @@ else
     }
 
     if [[ -f "hytale-downloader.zip" ]]; then
+        info "Hytale Downloader SHA256: $(sha256sum hytale-downloader.zip | awk '{print $1}')"
         unzip -o hytale-downloader.zip
         rm -f hytale-downloader.zip
         chmod +x "${DOWNLOADER_BIN}" 2>/dev/null || true
@@ -278,16 +332,15 @@ else
     fi
 fi
 
-# Set ownership
-chown -R "${HYTALE_USER}:${HYTALE_USER}" "$INSTALL_DIR"
+# Set ownership (--no-dereference to avoid following symlinks)
+chown -R --no-dereference "${HYTALE_USER}:${HYTALE_USER}" "$INSTALL_DIR"
 
 # Run the downloader to fetch server files
 if [[ -x "${SERVER_DIR}/${DOWNLOADER_BIN}" ]] || [[ -x "${SERVER_DIR}/hytale-downloader" ]]; then
     info "Downloading Hytale server files (this may take a few minutes)..."
-    su - "$HYTALE_USER" -c "cd ${SERVER_DIR} && ./${DOWNLOADER_BIN}" || {
+    runuser -u "$HYTALE_USER" -- bash -c 'cd "$1" && ./"$2"' _ "$SERVER_DIR" "$DOWNLOADER_BIN" || {
         warn "Downloader exited with an error. You may need to run it manually after install."
-        warn "  su - ${HYTALE_USER}"
-        warn "  cd ${SERVER_DIR} && ./${DOWNLOADER_BIN}"
+        warn "  sudo -u ${HYTALE_USER} bash -c 'cd ${SERVER_DIR} && ./${DOWNLOADER_BIN}'"
     }
     success "Server files downloaded."
 fi
@@ -296,6 +349,10 @@ fi
 
 info "Configuring firewall..."
 
+# Detect the actual SSH port to avoid lockout on non-standard ports (e.g. Scala uses 6543)
+SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+SSH_PORT=${SSH_PORT:-22}
+
 if [[ "$PKG_MANAGER" == "dnf" ]]; then
     # Rocky/RHEL: use firewalld
     if ! systemctl is-active --quiet firewalld 2>/dev/null; then
@@ -303,18 +360,25 @@ if [[ "$PKG_MANAGER" == "dnf" ]]; then
         systemctl enable firewalld >/dev/null 2>&1 || true
         systemctl start firewalld >/dev/null 2>&1 || true
     fi
+    firewall-cmd --set-default-zone=public >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port="${SERVER_PORT}/udp" >/dev/null 2>&1 || true
-    firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+    if [[ "$SSH_PORT" == "22" ]]; then
+        firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+    else
+        firewall-cmd --permanent --add-port="${SSH_PORT}/tcp" >/dev/null 2>&1 || true
+    fi
     firewall-cmd --reload >/dev/null 2>&1 || true
-    success "Firewall configured (firewalld): SSH and Hytale (${SERVER_PORT}/udp) allowed."
+    success "Firewall configured (firewalld): SSH (${SSH_PORT}/tcp) and Hytale (${SERVER_PORT}/udp) allowed."
 else
     # Ubuntu/Debian: use UFW
-    ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
+    ufw default deny incoming >/dev/null 2>&1 || true
+    ufw default allow outgoing >/dev/null 2>&1 || true
+    ufw allow "${SSH_PORT}/tcp" comment "SSH" >/dev/null 2>&1 || true
     ufw allow "${SERVER_PORT}/udp" comment "Hytale Server" >/dev/null 2>&1 || true
     if ! ufw status 2>/dev/null | grep -q "Status: active"; then
         ufw --force enable >/dev/null 2>&1 || true
     fi
-    success "Firewall configured (UFW): SSH (22/tcp) and Hytale (${SERVER_PORT}/udp) allowed."
+    success "Firewall configured (UFW): SSH (${SSH_PORT}/tcp) and Hytale (${SERVER_PORT}/udp) allowed."
 fi
 
 # --- Step 7: Create systemd Service -------------------------------------------
@@ -326,6 +390,7 @@ if [[ "$SERVER_PORT" != "5520" ]]; then
     BIND_FLAG=" --bind 0.0.0.0:${SERVER_PORT}"
 fi
 
+install -m 0644 /dev/null "/etc/systemd/system/${SERVICE_NAME}.service"
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << EOF
 [Unit]
 Description=Hytale Dedicated Server
@@ -349,9 +414,23 @@ SyslogIdentifier=${SERVICE_NAME}
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 ReadWritePaths=${SERVER_DIR} ${BACKUP_DIR}
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
@@ -386,11 +465,11 @@ if [[ -d "\${SERVER_DIR}/universe" ]] || [[ -f "\${SERVER_DIR}/config.json" ]]; 
         2>/dev/null || true
 
     # Keep only the last 48 backups (24 hours at 30-min intervals)
-    find "\${BACKUP_DIR}" -name "hytale-backup-*.tar.gz" -mtime +1 -delete 2>/dev/null || true
+    find "\${BACKUP_DIR}" -maxdepth 1 -name "hytale-backup-*.tar.gz" -mtime +1 -delete 2>/dev/null || true
 fi
 BACKUPEOF
 
-    chmod +x "$BACKUP_SCRIPT"
+    chmod 0750 "$BACKUP_SCRIPT"
     chown "${HYTALE_USER}:${HYTALE_USER}" "$BACKUP_SCRIPT"
 
     # Add cron job (every 30 minutes) — idempotent via temp file
@@ -422,11 +501,12 @@ echo "Opening live logs now (Ctrl+C to exit)..."
 echo ""
 journalctl -u hytale-server -f
 EOF
-chmod +x "${INSTALL_DIR}/console.sh"
+chmod 0750 "${INSTALL_DIR}/console.sh"
+chown "${HYTALE_USER}:${HYTALE_USER}" "${INSTALL_DIR}/console.sh"
 
 # Save install details for reference (oneshotmatrix pattern)
 OS_PRETTY=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo "Unknown")
-cat > "${INSTALL_DIR}/credentials.txt" << CREDEOF
+cat > "${INSTALL_DIR}/server-info.txt" << CREDEOF
 ============================================
   Hytale Server Install Details
   Generated: $(date)
@@ -449,8 +529,8 @@ Commands:
   Logs:     journalctl -u ${SERVICE_NAME} -f
   Status:   systemctl status ${SERVICE_NAME}
 CREDEOF
-chmod 600 "${INSTALL_DIR}/credentials.txt"
-chown "${HYTALE_USER}:${HYTALE_USER}" "${INSTALL_DIR}/credentials.txt"
+chmod 600 "${INSTALL_DIR}/server-info.txt"
+chown "${HYTALE_USER}:${HYTALE_USER}" "${INSTALL_DIR}/server-info.txt"
 
 # --- Step 10: Start the Server -------------------------------------------------
 
@@ -470,15 +550,17 @@ if [[ -f "${SERVER_DIR}/HytaleServer.jar" ]]; then
 else
     warn "HytaleServer.jar not found in ${SERVER_DIR}."
     warn "You may need to run the Hytale Downloader manually:"
-    warn "  su - ${HYTALE_USER}"
-    warn "  cd ${SERVER_DIR}"
-    warn "  ./${DOWNLOADER_BIN}"
+    warn "  sudo -u ${HYTALE_USER} bash -c 'cd ${SERVER_DIR} && ./${DOWNLOADER_BIN}'"
     warn "Then start the server with: systemctl start ${SERVICE_NAME}"
 fi
 
 # --- Done! --------------------------------------------------------------------
 
-PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_VPS_IP")
+PUBLIC_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "YOUR_VPS_IP")
+# Sanitize IP to prevent terminal injection
+if [[ ! "$PUBLIC_IP" =~ ^[0-9a-fA-F.:]+$ ]]; then
+    PUBLIC_IP="YOUR_VPS_IP"
+fi
 
 echo ""
 echo -e "${GREEN}${BOLD}============================================${NC}"
@@ -492,15 +574,13 @@ echo -e "  ${BOLD}Port:${NC}               ${SERVER_PORT}/udp"
 echo -e "  ${BOLD}Memory:${NC}             ${SERVER_MEM}"
 echo -e "  ${BOLD}Java:${NC}               $(java --version 2>&1 | head -1)"
 echo -e "  ${BOLD}Install log:${NC}        ${LOG_FILE}"
-echo -e "  ${BOLD}Install details:${NC}    ${INSTALL_DIR}/credentials.txt"
+echo -e "  ${BOLD}Install details:${NC}    ${INSTALL_DIR}/server-info.txt"
 echo ""
 echo -e "  ${YELLOW}${BOLD}NEXT STEP: Authenticate your server!${NC}"
 echo -e "  Run the server interactively to authenticate:"
 echo ""
 echo -e "    ${CYAN}systemctl stop ${SERVICE_NAME}${NC}"
-echo -e "    ${CYAN}su - ${HYTALE_USER}${NC}"
-echo -e "    ${CYAN}cd ${SERVER_DIR}${NC}"
-echo -e "    ${CYAN}java -Xms${SERVER_MEM} -Xmx${SERVER_MEM} -jar HytaleServer.jar --assets Assets.zip${BIND_FLAG}${NC}"
+echo -e "    ${CYAN}sudo -u ${HYTALE_USER} bash -c 'cd ${SERVER_DIR} && java -Xms${SERVER_MEM} -Xmx${SERVER_MEM} -jar HytaleServer.jar --assets Assets.zip${BIND_FLAG}'${NC}"
 echo ""
 echo -e "  Then in the console, type:  ${BOLD}/auth login device${NC}"
 echo -e "  Follow the URL at ${BOLD}https://accounts.hytale.com/device${NC}"
@@ -508,7 +588,6 @@ echo -e "  Enter the code shown in the console and sign in."
 echo -e "  After auth succeeds, run:   ${BOLD}/auth persistence Encrypted${NC}"
 echo -e "  Then Ctrl+C and restart the service:"
 echo ""
-echo -e "    ${CYAN}exit${NC}"
 echo -e "    ${CYAN}systemctl start ${SERVICE_NAME}${NC}"
 echo ""
 echo -e "  ${BOLD}Useful commands:${NC}"

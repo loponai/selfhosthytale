@@ -6,15 +6,22 @@
 curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/install.sh | sudo bash
 ```
 
+> **Prefer to review first?** Download, inspect, then run:
+> ```bash
+> wget https://raw.githubusercontent.com/loponai/selfhosthytale/main/install.sh
+> less install.sh
+> sudo bash install.sh
+> ```
+
 ---
 
 ## Quick Start (Scala Hosting)
 
-We recommend [Scala Hosting](http://scala.tomspark.tech/) because their self-managed VPS gives you **full root access** out of the box — which is required for Java, firewall, and systemd service configuration. KVM virtualization means dedicated resources with no overselling.
+We recommend [Scala Hosting](https://scala.tomspark.tech/) because their self-managed VPS gives you **full root access** out of the box — which is required for Java, firewall, and systemd service configuration. KVM virtualization means dedicated resources with no overselling.
 
 ### Step 1: Get a VPS
 
-1. Go to [Scala Hosting Self-Managed VPS](http://scala.tomspark.tech/) — make sure you're on the **Self-Managed** (unmanaged) plans, not the Managed ones
+1. Go to [Scala Hosting Self-Managed VPS](https://scala.tomspark.tech/) — make sure you're on the **Self-Managed** (unmanaged) plans, not the Managed ones
 2. Pick **Build #3** (4 cores, 8GB RAM, 240GB NVMe) — ~$52–67/mo, recommended for 10–30 players
 3. Under **OS**, select **Rocky Linux 10** (the one **without** SPanel) — this gives you a clean server with nothing to disable later. If you accidentally picked "Rocky Linux 10 with SPanel", see Step 3 to disable it
 4. Choose the data center location **closest to your players** for lowest latency
@@ -69,6 +76,12 @@ Replace `YOUR_SERVER_IP` with the IP from your Scala welcome email (e.g. `ssh ro
 - Enter the **root password** from your Scala welcome email
   - **The screen will stay completely blank as you type or paste** — no dots, no stars, nothing. This is normal! Just paste your password and press Enter. It's there, you just can't see it.
 
+**Change your root password immediately** (the one from the email was sent in plaintext):
+
+```bash
+passwd
+```
+
 Once you're in, you'll see a command prompt on your server.
 
 **If you picked "Rocky Linux 10" (without SPanel) in Step 1**, you're good — skip straight to Step 4.
@@ -104,15 +117,13 @@ Before players can join, your server must be linked to a Hytale account. This is
 systemctl stop hytale-server
 ```
 
-2. **Switch to the hytale user and start the server manually:**
+2. **Start the server manually as the hytale user:**
 
 ```bash
-su - hytale
-cd /opt/hytale/server
-java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip
+sudo -u hytale bash -c 'cd /opt/hytale/server && java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip'
 ```
 
-> Replace `4G` with the memory value you chose during installation (check with `cat /opt/hytale/credentials.txt`).
+> Replace `4G` with the memory value you chose during installation (check with `sudo cat /opt/hytale/server-info.txt`).
 
 Wait for the server to finish loading. When you see the server console ready, continue.
 
@@ -132,10 +143,9 @@ Wait for the server to finish loading. When you see the server console ready, co
 
 > If you skip this step, you'll need to re-authenticate every time the server restarts.
 
-6. **Press `Ctrl+C`** to stop the server, then switch back to root and restart the service:
+6. **Press `Ctrl+C`** to stop the server, then restart the service:
 
 ```bash
-exit
 systemctl start hytale-server
 ```
 
@@ -158,9 +168,9 @@ Look for **active (running)** in green. Players can now connect using your serve
 - **systemd service** — auto-starts on boot, restarts on crash, graceful shutdown
 - **Firewall** — UFW (Ubuntu/Debian) or firewalld (Rocky/RHEL), SSH and game port only
 - **Automated backups** — every 30 minutes with 24-hour retention
-- **Security hardening** — NoNewPrivileges, PrivateTmp, ProtectSystem, ProtectHome
+- **systemd sandboxing** — NoNewPrivileges, PrivateTmp, ProtectSystem, ProtectHome, ProtectKernelTunables, RestrictNamespaces, and more
 - **Install log** — everything logged to `/var/log/hytale-install.log`
-- **Credentials file** — all install details saved to `/opt/hytale/credentials.txt`
+- **Server info file** — all install details saved to `/opt/hytale/server-info.txt`
 
 ## Why Scala Hosting?
 
@@ -179,9 +189,9 @@ Look for **active (running)** in green. Players can now connect using your serve
 | **Build #3** | ~$52–67/mo | 4 cores | 8 GB | 240 GB NVMe | 10–30 players (recommended) |
 | **Build #4** | ~$71–123/mo | 8 cores | 16 GB | 480 GB NVMe | 30–75+ players |
 
-> **Pricing note:** Prices vary based on commitment length (1-month vs 1-year vs 3-year). **Renewal prices are higher than introductory rates.** Always check [the pricing page](http://scala.tomspark.tech/) for current rates.
+> **Pricing note:** Prices vary based on commitment length (1-month vs 1-year vs 3-year). **Renewal prices are higher than introductory rates.** Always check [the pricing page](https://scala.tomspark.tech/) for current rates.
 
-**Recommended:** Start with [**Build #3**](http://scala.tomspark.tech/) if you expect more than a handful of players. Hytale uses view-distance-based chunk loading which scales RAM usage quickly. You can always upgrade later through Scala's panel.
+**Recommended:** Start with [**Build #3**](https://scala.tomspark.tech/) if you expect more than a handful of players. Hytale uses view-distance-based chunk loading which scales RAM usage quickly. You can always upgrade later through Scala's panel.
 
 ---
 
@@ -195,7 +205,9 @@ Your VPS is publicly accessible. After installation, harden SSH access to preven
 
 ```bash
 adduser gameadmin
-usermod -aG sudo gameadmin
+passwd gameadmin          # Set a strong password (required on Rocky/RHEL)
+usermod -aG sudo gameadmin   # Ubuntu/Debian
+# On Rocky/RHEL, use: usermod -aG wheel gameadmin
 ```
 
 #### Set up SSH key authentication
@@ -207,16 +219,21 @@ On your **local machine** (not the VPS):
 ssh-keygen -t ed25519 -C "your_email@example.com"
 
 # Copy your public key to the VPS
-ssh-copy-id gameadmin@YOUR_VPS_IP
+# If your provider uses a non-standard SSH port (Scala uses 6543), add -p 6543
+ssh-copy-id -p 6543 gameadmin@YOUR_VPS_IP
 ```
 
-Test that key-based login works:
+Test that key-based login works **in a separate terminal window** (keep your current session open as a fallback):
 
 ```bash
-ssh gameadmin@YOUR_VPS_IP
+ssh -p 6543 gameadmin@YOUR_VPS_IP
 ```
 
+> If your SSH is on the default port 22, omit the `-p 6543` flag.
+
 #### Disable password authentication
+
+> **WARNING: Confirm key-based login works in a SEPARATE terminal before proceeding.** If key auth is not working and you disable passwords, you will be **permanently locked out** of your server. Keep your current SSH session open as a fallback until you verify key-based login in a new window.
 
 Once key-based login is confirmed working, disable password auth on the VPS:
 
@@ -262,7 +279,68 @@ To check banned IPs:
 sudo fail2ban-client status sshd
 ```
 
-> **Important:** After these steps, always use `ssh gameadmin@YOUR_VPS_IP` to connect, then `sudo` for root commands.
+> **Important:** After these steps, always use `ssh -p 6543 gameadmin@YOUR_VPS_IP` to connect (omit `-p 6543` if using default port 22), then `sudo` for root commands.
+
+### Automatic Security Updates
+
+Your VPS is exposed to the internet. Configure automatic security patches so you're protected even if you forget to update manually.
+
+**Rocky/RHEL:**
+```bash
+sudo dnf install -y dnf-automatic
+sudo systemctl enable --now dnf-automatic-install.timer
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install -y unattended-upgrades
+sudo dpkg-reconfigure -plow unattended-upgrades
+```
+
+> You should still manually run full updates (`dnf update` / `apt upgrade`) periodically, but automatic security updates cover critical patches between manual updates.
+
+### Java Updates
+
+On **Ubuntu/Debian**, Java 25 is installed via the Adoptium APT repository and will be updated automatically with `apt upgrade`.
+
+On **Rocky/RHEL**, Java 25 is installed from a tarball and **does not auto-update**. Periodically check [Adoptium Temurin Releases](https://adoptium.net/temurin/releases/) for new Java 25 builds. To update, download the new tarball and re-run the installer, or manually extract it to `/usr/lib/jvm/`.
+
+### SELinux (Rocky/RHEL)
+
+Rocky Linux ships with SELinux in enforcing mode. If the Hytale server fails to start with "Permission denied" errors, SELinux may be blocking it:
+
+```bash
+sestatus                         # Check if SELinux is enforcing
+ausearch -m AVC -ts recent       # Check for recent denials
+```
+
+> Never disable SELinux entirely (`setenforce 0`) on a production server. Instead, create targeted policies for the specific denials you encounter.
+
+### Basic Monitoring
+
+Monitor your server for unusual activity:
+
+```bash
+last -20                                  # Recent logins
+who                                       # Currently logged-in users
+ss -tulnp                                 # Open ports and listening services
+journalctl -u hytale-server --since "24 hours ago" | tail -50   # Server logs
+```
+
+> If you notice unexpected processes, unfamiliar logins, or high CPU usage (potential crypto mining), investigate immediately.
+
+### Privacy & GDPR
+
+Running a game server collects player data including usernames, IP addresses, and potentially chat logs. If you or your players are in the EU, you may have GDPR obligations. Consider publishing a privacy policy for your server that explains what data you collect and how long you retain it.
+
+### DDoS Awareness
+
+Game servers are frequent DDoS targets, especially once publicly listed. Since Hytale uses UDP (QUIC), Cloudflare's proxy cannot protect your traffic (it must be set to "DNS only"). Your VPS IP is directly exposed.
+
+Mitigations:
+- Choose a VPS provider with built-in DDoS protection
+- Consider game-specific DDoS mitigation services if you experience attacks
+- Monitor traffic with `iftop` or `vnstat` to spot anomalies early
 
 ### Authentication Modes
 
@@ -301,10 +379,10 @@ Players can then connect with `play.yourdomain.com` instead of an IP address.
 
 > **Limitation:** Hytale does **not** support SRV records. If you're using a non-default port, players must include the port number: `play.yourdomain.com:5520`
 
-### View credentials
+### View server info
 
 ```bash
-cat /opt/hytale/credentials.txt
+sudo cat /opt/hytale/server-info.txt
 ```
 
 ---
@@ -354,7 +432,7 @@ Each world has its own config inside `universe/worlds/<world_name>/`:
 }
 ```
 
-> Config files are read on startup. Always stop the server before editing configs — changes may be overwritten otherwise.
+> Config files are read on startup. Always stop the server before editing configs — changes may be overwritten otherwise. These examples are illustrative — check the actual generated files after first launch for the correct format and available options.
 
 ### Custom Port
 
@@ -410,7 +488,7 @@ systemctl restart hytale-server
 
 ### Everyday Commands
 
-These are the commands you'll use most often to manage your server from SSH:
+These are the commands you'll use most often to manage your server from SSH. If you're logged in as `gameadmin` (not root), prefix commands with `sudo`.
 
 ```bash
 systemctl start hytale-server       # Start the server
@@ -429,12 +507,10 @@ To run in-game commands, you need to run the server interactively (not as a back
 
 ```bash
 systemctl stop hytale-server
-su - hytale
-cd /opt/hytale/server
-java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip
+sudo -u hytale bash -c 'cd /opt/hytale/server && java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip'
 ```
 
-> Replace `4G` with your configured memory value (check `cat /opt/hytale/credentials.txt`).
+> Replace `4G` with your configured memory value (check `sudo cat /opt/hytale/server-info.txt`).
 
 Now you can type commands directly into the server console:
 
@@ -443,7 +519,7 @@ Now you can type commands directly into the server console:
 | Command | What it does |
 |---------|--------------|
 | `/auth login device` | Link the server to your Hytale account |
-| `/auth persistence Encrypted` | Save login so it survives reboots |
+| `/auth persistence Encrypted` | Save login encrypted on disk (survives reboots) |
 | `/auth logout` | Unlink the server from your account |
 
 #### Player Management
@@ -479,10 +555,9 @@ Now you can type commands directly into the server console:
 | `/update download` | Download the latest update |
 | `/update apply` | Apply the update (server will restart) |
 
-When you're done with interactive commands, press `Ctrl+C` to stop the server, type `exit`, and restart the service:
+When you're done with interactive commands, press `Ctrl+C` to stop the server and restart the service:
 
 ```bash
-exit
 systemctl start hytale-server
 ```
 
@@ -502,6 +577,7 @@ You should see files like `hytale-backup-20260212-143000.tar.gz` — one every 3
 systemctl stop hytale-server
 tar -czf /opt/hytale/backups/hytale-backup-$(date +%Y%m%d-%H%M%S).tar.gz \
   -C /opt/hytale/server universe/ config.json permissions.json whitelist.json bans.json
+chown hytale:hytale /opt/hytale/backups/hytale-backup-*.tar.gz
 systemctl start hytale-server
 ```
 
@@ -510,6 +586,7 @@ systemctl start hytale-server
 systemctl stop hytale-server
 cd /opt/hytale/server
 tar -xzf /opt/hytale/backups/hytale-backup-TIMESTAMP.tar.gz
+chown -R hytale:hytale /opt/hytale/server/
 systemctl start hytale-server
 ```
 
@@ -521,22 +598,18 @@ Always back up before updating. Then:
 
 ```bash
 systemctl stop hytale-server
-su - hytale
-cd /opt/hytale/server
-./hytale-downloader-linux-amd64 -check-update
-./hytale-downloader-linux-amd64
-exit
+sudo -u hytale bash -c 'cd /opt/hytale/server && ./hytale-downloader-linux-amd64 -check-update && ./hytale-downloader-linux-amd64'
 systemctl start hytale-server
 ```
 
 Or use the in-game `/update` commands from the server console (see above).
 
-### View Install Details
+### View Server Info
 
 All your server settings and useful commands are saved in one place:
 
 ```bash
-cat /opt/hytale/credentials.txt
+sudo cat /opt/hytale/server-info.txt
 ```
 
 ---
@@ -640,32 +713,30 @@ java --version  # Should output: openjdk 25.x.x
 ### Create a dedicated user
 
 ```bash
-useradd -r -m -d /opt/hytale -s /bin/bash hytale
+useradd -r -m -d /opt/hytale -s /usr/sbin/nologin hytale
 ```
 
 ### Download Hytale server files
 
 ```bash
-su - hytale
 mkdir -p /opt/hytale/server
 cd /opt/hytale/server
 wget https://downloader.hytale.com/hytale-downloader.zip
 unzip hytale-downloader.zip
 chmod +x hytale-downloader-linux-amd64
-./hytale-downloader-linux-amd64
+chown -R hytale:hytale /opt/hytale
+sudo -u hytale ./hytale-downloader-linux-amd64
 ```
 
 ### First launch (test run)
 
 ```bash
-java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip
+sudo -u hytale bash -c 'cd /opt/hytale/server && java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip'
 ```
 
 Stop with `Ctrl+C` after it finishes loading.
 
 ### Create a systemd service
-
-Switch back to root (`exit`), then:
 
 ```bash
 cat > /etc/systemd/system/hytale-server.service << 'EOF'
@@ -690,9 +761,23 @@ SyslogIdentifier=hytale-server
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 ReadWritePaths=/opt/hytale/server /opt/hytale/backups
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target
@@ -753,7 +838,7 @@ ls -la /opt/hytale/server/Assets.zip
 - Reduce `max_players`
 - Check for mods consuming excessive resources
 - Check for duplicate mod files (old versions not removed during updates)
-- Consider [upgrading your Scala VPS plan](http://scala.tomspark.tech/)
+- Consider [upgrading your Scala VPS plan](https://scala.tomspark.tech/)
 
 ### Server crashes on startup
 
@@ -774,7 +859,7 @@ cat > /etc/logrotate.d/hytale << 'EOF'
     compress
     missingok
     notifempty
-    create 0644 hytale hytale
+    create 0640 hytale hytale
 }
 EOF
 ```
@@ -788,6 +873,8 @@ To completely remove the Hytale server and start fresh:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/uninstall.sh | sudo bash
 ```
+
+> **Prefer to review first?** `wget https://raw.githubusercontent.com/loponai/selfhosthytale/main/uninstall.sh && less uninstall.sh && sudo bash uninstall.sh`
 
 This removes the systemd service, server files, backups, cron job, the `hytale` user, firewall rules, and install log. It will ask for confirmation before deleting anything, and optionally removes Java 25.
 
@@ -815,7 +902,7 @@ After uninstalling, you can re-run the installer to start over from scratch.
 | `/opt/hytale/server/mods/` | Server mods and plugins |
 | `/opt/hytale/server/logs/` | Server logs |
 | `/opt/hytale/backups/` | Automated backups |
-| `/opt/hytale/credentials.txt` | Install details and saved commands |
+| `/opt/hytale/server-info.txt` | Install details and management commands |
 | `/etc/systemd/system/hytale-server.service` | systemd service definition |
 
 ### Ports
@@ -843,4 +930,4 @@ After uninstalling, you can re-run the installer to start over from scratch.
 
 - [Hytale Server Manual — Hypixel Studios](https://support.hytale.com/hc/en-us/articles/45326769420827-Hytale-Server-Manual)
 - [Hytale EULA](https://hytale.com/eula) / [Server Operator Policies](https://hytale.com/server-policies)
-- [Scala Hosting Self-Managed Linux VPS](http://scala.tomspark.tech/)
+- [Scala Hosting Self-Managed Linux VPS](https://scala.tomspark.tech/)

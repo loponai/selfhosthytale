@@ -10,6 +10,11 @@
 
 set -euo pipefail
 
+# --- Security Hardening ------------------------------------------------------
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+umask 027
+
 # --- Colors & Helpers --------------------------------------------------------
 
 RED='\033[0;31m'
@@ -19,10 +24,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-info()    { echo -e "${CYAN}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+info()    { printf '%b %s\n' "${CYAN}[INFO]${NC}" "$*"; }
+success() { printf '%b %s\n' "${GREEN}[OK]${NC}" "$*"; }
+warn()    { printf '%b %s\n' "${YELLOW}[WARN]${NC}" "$*"; }
+error()   { printf '%b %s\n' "${RED}[ERROR]${NC}" "$*"; exit 1; }
 
 # --- Pre-flight Checks -------------------------------------------------------
 
@@ -80,7 +85,7 @@ fi
 
 # --- Step 3: Remove install directory -----------------------------------------
 
-if [[ -d "$INSTALL_DIR" ]]; then
+if [[ -d "$INSTALL_DIR" && "$INSTALL_DIR" == "/opt/hytale" ]]; then
     info "Removing ${INSTALL_DIR}..."
     rm -rf "$INSTALL_DIR"
     success "Install directory removed."
@@ -92,7 +97,7 @@ fi
 
 if id "$HYTALE_USER" &>/dev/null; then
     info "Removing '${HYTALE_USER}' system user..."
-    userdel -r "$HYTALE_USER" 2>/dev/null || userdel "$HYTALE_USER" 2>/dev/null || true
+    userdel "$HYTALE_USER" 2>/dev/null || true
     success "User '${HYTALE_USER}' removed."
 else
     warn "User '${HYTALE_USER}' not found, skipping."
@@ -132,11 +137,15 @@ if [[ "$REMOVE_JAVA" =~ ^[Yy]$ ]]; then
 
     if command -v dnf &>/dev/null; then
         # Rocky/RHEL: remove tarball install
-        rm -rf /usr/lib/jvm/temurin-25 /usr/lib/jvm/jdk-25*
+        # Remove alternatives before deleting files
         update-alternatives --remove java /usr/lib/jvm/temurin-25/bin/java 2>/dev/null || true
-        update-alternatives --remove java /usr/lib/jvm/jdk-25*/bin/java 2>/dev/null || true
         update-alternatives --remove javac /usr/lib/jvm/temurin-25/bin/javac 2>/dev/null || true
-        update-alternatives --remove javac /usr/lib/jvm/jdk-25*/bin/javac 2>/dev/null || true
+        for jdk_dir in /usr/lib/jvm/jdk-25*; do
+            [ -d "$jdk_dir" ] || continue
+            update-alternatives --remove java "$jdk_dir/bin/java" 2>/dev/null || true
+            update-alternatives --remove javac "$jdk_dir/bin/javac" 2>/dev/null || true
+        done
+        rm -rf /usr/lib/jvm/temurin-25 /usr/lib/jvm/jdk-25*
         rm -f /etc/profile.d/temurin.sh
     elif command -v apt &>/dev/null; then
         # Ubuntu/Debian: remove package and repo
