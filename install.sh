@@ -70,7 +70,7 @@ TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 if [[ $TOTAL_RAM_MB -lt 3500 ]]; then
     warn "System has ${TOTAL_RAM_MB}MB RAM. Hytale recommends at least 4GB."
     warn "The server may not run well. Continue anyway? (y/N)"
-    read -r -t 60 CONTINUE || CONTINUE="N"
+    read -r -t 60 CONTINUE < /dev/tty || CONTINUE="N"
     [[ "$CONTINUE" =~ ^[Yy]$ ]] || exit 1
 fi
 
@@ -94,7 +94,7 @@ DEFAULT_MEM=$(( TOTAL_RAM_MB * 75 / 100 / 1024 ))
 echo -e "${CYAN}How much memory (in GB) to allocate to the Hytale server?${NC}"
 echo -e "  Your VPS has ${TOTAL_RAM_MB}MB total RAM."
 echo -e "  Recommended: ~75% of total = ${DEFAULT_MEM}G"
-read -r -t 60 -p "  Memory [${DEFAULT_MEM}G]: " SERVER_MEM || SERVER_MEM=""
+read -r -t 60 -p "  Memory [${DEFAULT_MEM}G]: " SERVER_MEM < /dev/tty || SERVER_MEM=""
 SERVER_MEM=${SERVER_MEM:-${DEFAULT_MEM}G}
 # Normalize: handle G, g, M, m
 SERVER_MEM=$(echo "$SERVER_MEM" | tr '[:lower:]' '[:upper:]')
@@ -110,7 +110,7 @@ fi
 # Port
 echo ""
 echo -e "${CYAN}Which UDP port should the server listen on?${NC}"
-read -r -t 60 -p "  Port [5520]: " SERVER_PORT || SERVER_PORT=""
+read -r -t 60 -p "  Port [5520]: " SERVER_PORT < /dev/tty || SERVER_PORT=""
 SERVER_PORT=${SERVER_PORT:-5520}
 # Validate port number
 if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || [[ "$SERVER_PORT" -lt 1 ]] || [[ "$SERVER_PORT" -gt 65535 ]]; then
@@ -123,7 +123,7 @@ fi
 # Backups
 echo ""
 echo -e "${CYAN}Enable automatic backups every 30 minutes?${NC}"
-read -r -t 60 -p "  Enable backups? [Y/n]: " ENABLE_BACKUPS || ENABLE_BACKUPS=""
+read -r -t 60 -p "  Enable backups? [Y/n]: " ENABLE_BACKUPS < /dev/tty || ENABLE_BACKUPS=""
 ENABLE_BACKUPS=${ENABLE_BACKUPS:-Y}
 
 echo ""
