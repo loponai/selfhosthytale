@@ -125,6 +125,8 @@ echo ""
 # --- Step 1: System Update ----------------------------------------------------
 
 info "Updating system packages..."
+# Clean up any broken repos from previous install attempts
+rm -f /etc/yum.repos.d/adoptium.repo 2>/dev/null || true
 pkg_update
 success "System updated."
 
@@ -149,17 +151,47 @@ if java --version 2>&1 | grep -qE "openjdk 25\."; then
     success "Java 25 already installed, skipping."
 else
     if [[ "$PKG_MANAGER" == "dnf" ]]; then
-        # RPM-based: add Adoptium repo for RHEL/Rocky/Alma
-        cat > /etc/yum.repos.d/adoptium.repo << 'REPOEOF'
-[Adoptium]
-name=Adoptium
-baseurl=https://packages.adoptium.net/artifactory/rpm/rhel/$releasever/$basearch
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public
-REPOEOF
-        dnf makecache -q 2>/dev/null || true
-        dnf install -y temurin-25-jdk
+        # RPM-based: download Temurin JDK tarball directly (most reliable across Rocky/RHEL versions)
+        # Clean up any leftover repo from previous attempts
+        rm -f /etc/yum.repos.d/adoptium.repo 2>/dev/null || true
+
+        if [[ "$ARCH" == "x86_64" ]]; then
+            JDK_ARCH="x64"
+        elif [[ "$ARCH" == "aarch64" ]]; then
+            JDK_ARCH="aarch64"
+        fi
+
+        info "Downloading Temurin JDK 25 tarball..."
+        JDK_URL="https://api.adoptium.net/v3/binary/latest/25/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+        JDK_TAR="/tmp/temurin-25-jdk.tar.gz"
+        wget -q --show-progress -O "$JDK_TAR" "$JDK_URL" || error "Failed to download JDK 25. Check https://adoptium.net/temurin/releases/ for availability."
+
+        # Extract to /opt and symlink
+        info "Installing JDK to /usr/lib/jvm/temurin-25..."
+        mkdir -p /usr/lib/jvm
+        tar -xzf "$JDK_TAR" -C /usr/lib/jvm/
+        # The tarball extracts to a directory like jdk-25.0.1+9
+        JDK_DIR=$(ls -d /usr/lib/jvm/jdk-25* 2>/dev/null | head -1)
+        if [[ -z "$JDK_DIR" ]]; then
+            error "JDK extraction failed. Could not find extracted directory."
+        fi
+        ln -sfn "$JDK_DIR" /usr/lib/jvm/temurin-25
+
+        # Set up alternatives so 'java' points to temurin-25
+        update-alternatives --install /usr/bin/java java "${JDK_DIR}/bin/java" 1 >/dev/null 2>&1 || true
+        update-alternatives --set java "${JDK_DIR}/bin/java" >/dev/null 2>&1 || true
+        update-alternatives --install /usr/bin/javac javac "${JDK_DIR}/bin/javac" 1 >/dev/null 2>&1 || true
+        update-alternatives --set javac "${JDK_DIR}/bin/javac" >/dev/null 2>&1 || true
+
+        # Add to PATH via profile if alternatives didn't work
+        if ! java --version 2>&1 | grep -qE "openjdk 25\."; then
+            echo "export JAVA_HOME=${JDK_DIR}" > /etc/profile.d/temurin.sh
+            echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/temurin.sh
+            export JAVA_HOME="${JDK_DIR}"
+            export PATH="${JDK_DIR}/bin:$PATH"
+        fi
+
+        rm -f "$JDK_TAR"
     else
         # Deb-based: add Adoptium repo for Ubuntu/Debian
         mkdir -p /etc/apt/keyrings

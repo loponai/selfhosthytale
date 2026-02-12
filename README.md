@@ -534,15 +534,15 @@ apt update && apt upgrade -y
 
 **Rocky/RHEL:**
 ```bash
-cat > /etc/yum.repos.d/adoptium.repo << 'EOF'
-[Adoptium]
-name=Adoptium
-baseurl=https://packages.adoptium.net/artifactory/rpm/rhel/$releasever/$basearch
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public
-EOF
-dnf install -y temurin-25-jdk
+# Download Temurin JDK 25 tarball directly
+wget -O /tmp/temurin-25.tar.gz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+mkdir -p /usr/lib/jvm
+tar -xzf /tmp/temurin-25.tar.gz -C /usr/lib/jvm/
+JDK_DIR=$(ls -d /usr/lib/jvm/jdk-25* | head -1)
+ln -sfn "$JDK_DIR" /usr/lib/jvm/temurin-25
+update-alternatives --install /usr/bin/java java "$JDK_DIR/bin/java" 1
+update-alternatives --set java "$JDK_DIR/bin/java"
+rm -f /tmp/temurin-25.tar.gz
 java --version  # Should output: openjdk 25.x.x
 ```
 
