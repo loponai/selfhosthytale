@@ -4,7 +4,7 @@
 # Inspired by https://github.com/loponai/oneshotmatrix
 #
 # Deploys a dedicated Hytale server on a fresh Ubuntu/Debian VPS in one command:
-#   curl -fsSL https://YOUR_URL/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/install.sh | sudo bash
 #
 # Tested on: Ubuntu 22.04, 24.04 | Debian 12
 # Requires:  Root access, 4GB+ RAM, x64 or arm64
