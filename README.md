@@ -16,7 +16,7 @@ We recommend [Scala Hosting](http://scala.tomspark.tech/) because their self-man
 
 1. Go to [Scala Hosting Self-Managed VPS](http://scala.tomspark.tech/) — make sure you're on the **Self-Managed** (unmanaged) plans, not the Managed ones
 2. Pick **Build #3** (4 cores, 8GB RAM, 240GB NVMe) — ~$52–67/mo, recommended for 10–30 players
-3. Under **OS**, select **Ubuntu 24.04 LTS** — this gives you a clean server ready for Hytale
+3. Under **OS**, select **Rocky Linux 10** (the one **without** SPanel) — this gives you a clean server with nothing to disable later. If you accidentally picked "Rocky Linux 10 with SPanel", see Step 3 to disable it
 4. Choose the data center location **closest to your players** for lowest latency
 5. Complete checkout and wait for your welcome email with your server IP and root password
 
@@ -28,7 +28,7 @@ We recommend [Scala Hosting](http://scala.tomspark.tech/) because their self-man
 | **CPU** | 2 cores (x64 or arm64) | 4 cores, 3.5 GHz+ |
 | **Storage** | 20 GB SSD | 50 GB+ NVMe |
 | **Java** | Java 25 (Temurin/Adoptium) | Java 25 |
-| **OS** | Ubuntu 22.04+ / Debian 12+ | Ubuntu 24.04 LTS |
+| **OS** | Ubuntu 22.04+ / Debian 12+ / Rocky 8+ | Rocky Linux 10 |
 | **Network** | UDP port 5520 open | Unmetered bandwidth |
 
 ### Step 2: Read the EULA
@@ -70,6 +70,17 @@ Replace `YOUR_SERVER_IP` with the IP from your Scala welcome email (e.g. `ssh ro
   - **The screen will stay completely blank as you type or paste** — no dots, no stars, nothing. This is normal! Just paste your password and press Enter. It's there, you just can't see it.
 
 Once you're in, you'll see a command prompt on your server.
+
+**If you picked "Rocky Linux 10" (without SPanel) in Step 1**, you're good — skip straight to Step 4.
+
+**If you picked "Rocky Linux 10 with SPanel"**, disable SPanel's web server so it doesn't interfere:
+
+```bash
+systemctl mask --now httpd
+systemctl mask --now nginx
+```
+
+> This disables SPanel's web admin UI, but you won't need it — everything is managed via SSH after the installer runs.
 
 ### Step 4: Run the installer
 
@@ -131,7 +142,7 @@ Players can now connect using your server's IP address on port 5520.
 - **HytaleServer.jar** — the dedicated server itself
 - **Dedicated `hytale` system user** — no running as root
 - **systemd service** — auto-starts on boot, restarts on crash, graceful shutdown
-- **UFW firewall** — SSH and game port only, everything else blocked
+- **Firewall** — UFW (Ubuntu/Debian) or firewalld (Rocky/RHEL), SSH and game port only
 - **Automated backups** — every 30 minutes with 24-hour retention
 - **Security hardening** — NoNewPrivileges, PrivateTmp, ProtectSystem, ProtectHome
 - **Install log** — everything logged to `/var/log/hytale-install.log`
@@ -330,7 +341,9 @@ Launch with a different port:
 java -Xms4G -Xmx4G -jar HytaleServer.jar --assets Assets.zip --bind 0.0.0.0:YOUR_PORT
 ```
 
-Update firewall: `ufw allow YOUR_PORT/udp`
+Update firewall:
+- **Ubuntu/Debian:** `ufw allow YOUR_PORT/udp`
+- **Rocky/RHEL:** `firewall-cmd --permanent --add-port=YOUR_PORT/udp && firewall-cmd --reload`
 
 ---
 
@@ -508,12 +521,33 @@ If you'd rather do it step by step instead of using the one-shot script:
 
 ### Update the system
 
+**Rocky/RHEL:**
+```bash
+dnf update -y
+```
+
+**Ubuntu/Debian:**
 ```bash
 apt update && apt upgrade -y
 ```
 
 ### Install Java 25 (Adoptium Temurin)
 
+**Rocky/RHEL:**
+```bash
+cat > /etc/yum.repos.d/adoptium.repo << 'EOF'
+[Adoptium]
+name=Adoptium
+baseurl=https://packages.adoptium.net/artifactory/rpm/rocky/$releasever/$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public
+EOF
+dnf install -y temurin-25-jdk
+java --version  # Should output: openjdk 25.x.x
+```
+
+**Ubuntu/Debian:**
 ```bash
 apt install -y wget apt-transport-https gpg lsb-release
 mkdir -p /etc/apt/keyrings
@@ -539,7 +573,6 @@ su - hytale
 mkdir -p /opt/hytale/server
 cd /opt/hytale/server
 wget https://downloader.hytale.com/hytale-downloader.zip
-apt install -y unzip
 unzip hytale-downloader.zip
 chmod +x hytale-downloader-linux-amd64
 ./hytale-downloader-linux-amd64
@@ -595,6 +628,14 @@ systemctl start hytale-server
 
 ### Open the firewall
 
+**Rocky/RHEL:**
+```bash
+firewall-cmd --permanent --add-port=5520/udp
+firewall-cmd --permanent --add-service=ssh
+firewall-cmd --reload
+```
+
+**Ubuntu/Debian:**
 ```bash
 ufw allow 5520/udp comment "Hytale Server"
 ufw allow 22/tcp comment "SSH"
@@ -617,7 +658,7 @@ ls -la /opt/hytale/server/Assets.zip
 ### Players can't connect
 
 1. **Verify the server is running:** `systemctl status hytale-server`
-2. **Check the firewall:** `ufw status` — port 5520/udp must be ALLOW
+2. **Check the firewall:** `ufw status` (Ubuntu/Debian) or `firewall-cmd --list-ports` (Rocky/RHEL) — port 5520/udp must be open
 3. **Confirm it's UDP, not TCP** — Hytale uses QUIC over UDP
 4. **Check authentication:** server must be authenticated (`/auth login device`)
 5. **Version mismatch:** ensure the server version matches the client version
@@ -667,7 +708,7 @@ EOF
 
 ### Requirements
 
-- **Ubuntu 22.04+** or **Debian 12+** on an unmanaged VPS with full root access
+- **Rocky Linux 8+**, **Ubuntu 22.04+**, or **Debian 12+** on an unmanaged VPS with full root access
 - **4 GB RAM** minimum, 8 GB+ recommended
 - A [Hytale account](https://hytale.com) for server authentication
 - UDP port 5520 open

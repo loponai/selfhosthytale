@@ -3,10 +3,10 @@
 # Hytale One-Shot Server Installer
 # Inspired by https://github.com/loponai/oneshotmatrix
 #
-# Deploys a dedicated Hytale server on a fresh Ubuntu/Debian VPS in one command:
+# Deploys a dedicated Hytale server on a fresh VPS in one command:
 #   curl -fsSL https://raw.githubusercontent.com/loponai/selfhosthytale/main/install.sh | sudo bash
 #
-# Tested on: Ubuntu 22.04, 24.04 | Debian 12
+# Tested on: Rocky Linux 10 | Ubuntu 22.04, 24.04 | Debian 12
 # Requires:  Root access, 4GB+ RAM, x64 or arm64
 # =============================================================================
 
@@ -28,14 +28,37 @@ success() { echo -e "${GREEN}[OK]${NC} $*" | tee -a "$LOG_FILE"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$LOG_FILE"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE"; exit 1; }
 
+# --- Detect Package Manager --------------------------------------------------
+
+PKG_MANAGER=""
+if command -v dnf &>/dev/null; then
+    PKG_MANAGER="dnf"
+elif command -v apt &>/dev/null; then
+    PKG_MANAGER="apt"
+else
+    error "Unsupported system. This script requires dnf (Rocky/RHEL) or apt (Ubuntu/Debian)."
+fi
+
+pkg_install() {
+    if [[ "$PKG_MANAGER" == "dnf" ]]; then
+        dnf install -y -q "$@"
+    else
+        apt install -y -q "$@"
+    fi
+}
+
+pkg_update() {
+    if [[ "$PKG_MANAGER" == "dnf" ]]; then
+        dnf update -y -q
+    else
+        apt update -q && apt upgrade -y -q
+    fi
+}
+
 # --- Pre-flight Checks -------------------------------------------------------
 
 if [[ $EUID -ne 0 ]]; then
     error "This script must be run as root. Use: sudo bash install.sh"
-fi
-
-if ! command -v apt &>/dev/null; then
-    error "This script requires a Debian/Ubuntu-based system (apt package manager)."
 fi
 
 ARCH=$(uname -m)
@@ -104,6 +127,7 @@ read -r -t 60 -p "  Enable backups? [Y/n]: " ENABLE_BACKUPS || ENABLE_BACKUPS=""
 ENABLE_BACKUPS=${ENABLE_BACKUPS:-Y}
 
 echo ""
+info "Detected package manager: ${PKG_MANAGER}"
 info "Starting installation..."
 info "Install log: ${LOG_FILE}"
 echo ""
@@ -111,14 +135,20 @@ echo ""
 # --- Step 1: System Update ----------------------------------------------------
 
 info "Updating system packages..."
-apt update -q
-apt upgrade -y -q
+pkg_update
 success "System updated."
 
 # --- Step 2: Install Dependencies ---------------------------------------------
 
 info "Installing dependencies..."
-apt install -y -q wget curl gpg apt-transport-https lsb-release tar gzip ufw cron
+if [[ "$PKG_MANAGER" == "dnf" ]]; then
+    pkg_install wget curl tar gzip cronie unzip
+    # Enable and start crond on Rocky/RHEL
+    systemctl enable crond >/dev/null 2>&1 || true
+    systemctl start crond >/dev/null 2>&1 || true
+else
+    pkg_install wget curl gpg apt-transport-https lsb-release tar gzip cron unzip
+fi
 success "Dependencies installed."
 
 # --- Step 3: Install Java 25 (Adoptium Temurin) --------------------------------
@@ -128,33 +158,46 @@ info "Installing Java 25 (Eclipse Temurin)..."
 if java --version 2>&1 | grep -qE "openjdk 25\."; then
     success "Java 25 already installed, skipping."
 else
-    # Add Adoptium GPG key and repository
-    mkdir -p /etc/apt/keyrings
-    wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
-        | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg
+    if [[ "$PKG_MANAGER" == "dnf" ]]; then
+        # RPM-based: add Adoptium repo for Rocky/RHEL
+        cat > /etc/yum.repos.d/adoptium.repo << 'REPOEOF'
+[Adoptium]
+name=Adoptium
+baseurl=https://packages.adoptium.net/artifactory/rpm/rocky/$releasever/$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.adoptium.net/artifactory/api/gpg/key/public
+REPOEOF
+        dnf install -y -q temurin-25-jdk
+    else
+        # Deb-based: add Adoptium repo for Ubuntu/Debian
+        mkdir -p /etc/apt/keyrings
+        wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+            | gpg --dearmor -o /etc/apt/keyrings/adoptium.gpg
 
-    # Detect distro codename robustly (works on both Ubuntu and Debian)
-    CODENAME=""
-    if command -v lsb_release &>/dev/null; then
-        CODENAME=$(lsb_release -cs 2>/dev/null || true)
-    fi
-    if [[ -z "$CODENAME" ]] && [[ -f /etc/os-release ]]; then
-        CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
-    fi
-    if [[ -z "$CODENAME" ]]; then
-        warn "Could not detect distro codename, defaulting to 'jammy' (Ubuntu 22.04)."
-        CODENAME="jammy"
-    fi
-    info "Using distro codename: ${CODENAME}"
+        # Detect distro codename robustly
+        CODENAME=""
+        if command -v lsb_release &>/dev/null; then
+            CODENAME=$(lsb_release -cs 2>/dev/null || true)
+        fi
+        if [[ -z "$CODENAME" ]] && [[ -f /etc/os-release ]]; then
+            CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d= -f2)
+        fi
+        if [[ -z "$CODENAME" ]]; then
+            warn "Could not detect distro codename, defaulting to 'jammy' (Ubuntu 22.04)."
+            CODENAME="jammy"
+        fi
+        info "Using distro codename: ${CODENAME}"
 
-    echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb ${CODENAME} main" \
-        > /etc/apt/sources.list.d/adoptium.list
+        echo "deb [signed-by=/etc/apt/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb ${CODENAME} main" \
+            > /etc/apt/sources.list.d/adoptium.list
 
-    apt update -q
-    apt install -y -q temurin-25-jdk
+        apt update -q
+        apt install -y -q temurin-25-jdk
+    fi
 
     if ! java --version 2>&1 | grep -qE "openjdk 25\."; then
-        error "Java 25 installation failed. Check the Adoptium repository for your distro (${CODENAME})."
+        error "Java 25 installation failed. Check the Adoptium repository for your distro."
     fi
 
     success "Java 25 installed."
@@ -203,7 +246,6 @@ else
     }
 
     if [[ -f "hytale-downloader.zip" ]]; then
-        apt install -y -q unzip >/dev/null 2>&1 || true
         unzip -o hytale-downloader.zip
         rm -f hytale-downloader.zip
         chmod +x "${DOWNLOADER_BIN}" 2>/dev/null || true
@@ -229,16 +271,28 @@ fi
 
 # --- Step 6: Configure Firewall -----------------------------------------------
 
-info "Configuring firewall (UFW)..."
+info "Configuring firewall..."
 
-ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
-ufw allow "${SERVER_PORT}/udp" comment "Hytale Server" >/dev/null 2>&1 || true
-
-if ! ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw --force enable >/dev/null 2>&1 || true
+if [[ "$PKG_MANAGER" == "dnf" ]]; then
+    # Rocky/RHEL: use firewalld
+    if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+        pkg_install firewalld >/dev/null 2>&1 || true
+        systemctl enable firewalld >/dev/null 2>&1 || true
+        systemctl start firewalld >/dev/null 2>&1 || true
+    fi
+    firewall-cmd --permanent --add-port="${SERVER_PORT}/udp" >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    success "Firewall configured (firewalld): SSH and Hytale (${SERVER_PORT}/udp) allowed."
+else
+    # Ubuntu/Debian: use UFW
+    ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
+    ufw allow "${SERVER_PORT}/udp" comment "Hytale Server" >/dev/null 2>&1 || true
+    if ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw --force enable >/dev/null 2>&1 || true
+    fi
+    success "Firewall configured (UFW): SSH (22/tcp) and Hytale (${SERVER_PORT}/udp) allowed."
 fi
-
-success "Firewall configured: SSH (22/tcp) and Hytale (${SERVER_PORT}/udp) allowed."
 
 # --- Step 7: Create systemd Service -------------------------------------------
 
@@ -348,6 +402,7 @@ EOF
 chmod +x "${INSTALL_DIR}/console.sh"
 
 # Save install details for reference (oneshotmatrix pattern)
+OS_PRETTY=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo "Unknown")
 cat > "${INSTALL_DIR}/credentials.txt" << CREDEOF
 ============================================
   Hytale Server Install Details
@@ -361,7 +416,8 @@ Server port:        ${SERVER_PORT}/udp
 Memory allocation:  ${SERVER_MEM}
 System user:        ${HYTALE_USER}
 Java version:       $(java --version 2>&1 | head -1)
-OS:                 $(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)
+OS:                 ${OS_PRETTY}
+Package manager:    ${PKG_MANAGER}
 
 Commands:
   Start:    systemctl start ${SERVICE_NAME}
